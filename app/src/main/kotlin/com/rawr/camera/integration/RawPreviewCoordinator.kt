@@ -3,6 +3,7 @@ package com.rawr.camera.integration
 import android.app.Application
 import android.util.Log
 import android.view.Surface
+import com.rawr.camera.location.CaptureGps
 import com.rawr.camera.settings.model.ColorRenderProfile
 import com.rawr.camera.settings.model.DemosaicAlgorithm
 import com.rawr.camera.settings.model.LensProfile
@@ -487,7 +488,7 @@ class RawPreviewCoordinator(application: Application) : AutoCloseable {
         captureFilmEnabled: Boolean = false,
         ultraHdrEnabled: Boolean = false,
         ultraHdrGainmapQuality: Int = 95,
-        gps: DoubleArray? = null
+        gps: CaptureGps? = null
     ): Long {
         val subsampling = subsamplingCode(jpegChromaSubsamplingId)
         val demosaic = demosaicCode(demosaicAlgorithm)
@@ -573,7 +574,7 @@ class RawPreviewCoordinator(application: Application) : AutoCloseable {
         captureFilmEnabled: Boolean = false,
         ultraHdrEnabled: Boolean = false,
         ultraHdrGainmapQuality: Int = 95,
-        gps: DoubleArray? = null
+        gps: CaptureGps? = null
     ): Long {
         val subsampling = subsamplingCode(jpegChromaSubsamplingId)
         val demosaic = demosaicCode(demosaicAlgorithm)

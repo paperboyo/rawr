@@ -199,7 +199,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 request.timestampPolicy.nativeId, Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty(),
                 "RAWR ${BuildConfig.VERSION_NAME}", request.renderProfile,
                 metadataGamut, metadataTransfer, request.logProfile != null, requireNotNull(index).path,
-                request.gps?.nativeValues())
+                request.gps)
             check(handle != 0L) { "Native recorder did not start" }
             surface = engine.nativeSurface(handle)
             check(preview.setVideoSurface(surface, request.width, request.height, request.bitDepth)) {

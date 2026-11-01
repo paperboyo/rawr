@@ -100,8 +100,7 @@ class GpsSnapshotStoreTest {
             val admitted = requireNotNull(store.state.admissible(10 * second))
             assertFalse(store.offer(11, 11, 1000.0, "other"))
             store.setEnabled(false)
-            assertEquals(provider, 6, admitted.nativeValues().size)
-            assertEquals(provider, code.toDouble(), admitted.nativeValues()[5], 0.0)
+            assertEquals(provider, code, admitted.providerCode)
         }
     }
 
@@ -114,8 +113,11 @@ class GpsSnapshotStoreTest {
         assertNull(store.state.admissible(now + 120 * second + 1))
         store.setEnabled(false)
         assertNull(store.state.admissible(now))
-        assertEquals(0.0, admitted.nativeValues()[2], 0.0)
-        assertTrue(admitted.nativeValues()[3].isNaN())
-        assertFalse(admitted.toString().contains("1793059200123"))
+        assertEquals(0.0, admitted.latitude, 0.0)
+        assertEquals(0.0, admitted.longitude, 0.0)
+        assertEquals(0.0, requireNotNull(admitted.altitude), 0.0)
+        assertNull(admitted.accuracy)
+        assertEquals(1793059200123L, admitted.fixTimeMillis)
+        assertEquals("CaptureGps", admitted.toString())
     }
 }

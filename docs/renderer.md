@@ -10,6 +10,10 @@ speed/units and travel track/reference. Source rational pairs and EXIF version
 context are retained; legacy altitude is not guessed or converted. Ambiguous
 records are omitted, and malformed optional groups do not prevent image processing.
 
+Live capture GPS crosses JNI as the immutable `CaptureGps` record with named
+fields; `@Keep` preserves the native field contract in minified builds and its
+text representation omits location values.
+
 JPEG EXIF must fit the 65,533-byte APP1 payload limit. Oversized metadata fails
 the JPEG output; optional text and GPS are not silently trimmed to make it fit.
 

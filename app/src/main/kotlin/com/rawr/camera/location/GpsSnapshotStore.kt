@@ -1,21 +1,20 @@
 package com.rawr.camera.location
 
+import androidx.annotation.Keep
 import com.rawr.camera.location.LocationPolicy.MAX_AGE_NANOS
 import java.util.concurrent.atomic.AtomicReference
 
-class CaptureGps internal constructor(
-    private val latitude: Double,
-    private val longitude: Double,
-    private val altitude: Double?,
-    private val accuracy: Double?,
-    private val fixTimeMillis: Long,
-    private val providerCode: Int = 0
+/** Named fields are read by JNI; keep their names in minified builds. */
+@Keep
+@ConsistentCopyVisibility
+data class CaptureGps internal constructor(
+    val latitude: Double,
+    val longitude: Double,
+    val altitude: Double?,
+    val accuracy: Double?,
+    val fixTimeMillis: Long,
+    val providerCode: Int = 0
 ) {
-    fun nativeValues(): DoubleArray = doubleArrayOf(
-        latitude, longitude, altitude ?: Double.NaN, accuracy ?: Double.NaN, fixTimeMillis.toDouble(),
-        providerCode.toDouble()
-    )
-
     override fun toString(): String = "CaptureGps"
 }
 

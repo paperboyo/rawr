@@ -1,6 +1,7 @@
 package com.rawr.camera.integration
 
 import android.view.Surface
+import com.rawr.camera.location.CaptureGps
 
 /**
  * Thin JNI boundary for the application imaging engine.
@@ -177,7 +178,7 @@ class NativePreviewEngine {
         // forwards a quality. q95 keeps JPEG contours down in sky gradients.
         ultraHdrGainmapQuality: Int = 95,
         dngCompression: Int = 0,
-        gps: DoubleArray? = null
+        gps: CaptureGps? = null
     ): Long
 
     external fun cancelPreparedMultiframeCapture(handle: Long)
@@ -240,7 +241,7 @@ class NativePreviewEngine {
         // forwards a quality. q95 keeps JPEG contours down in sky gradients.
         ultraHdrGainmapQuality: Int = 95,
         dngCompression: Int = 0,
-        gps: DoubleArray? = null
+        gps: CaptureGps? = null
     ): Long
 
     external fun pollDngWriteCompletion(handle: Long): String
