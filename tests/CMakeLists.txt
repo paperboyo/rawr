@@ -30,8 +30,7 @@ function(rawr_test name)
   set_tests_properties(${name} PROPERTIES ENVIRONMENT "TMPDIR=${CMAKE_CURRENT_BINARY_DIR}")
 endfunction()
 
-rawr_test(gps_metadata_test native/gps_metadata_test.cpp "${APP}/encoding/jpeg/JpegCaptureWriter.cpp")
-target_compile_definitions(gps_metadata_test PRIVATE RAWR_EXIF_ONLY)
+rawr_test(gps_metadata_test native/gps_metadata_test.cpp "${APP}/encoding/jpeg/JpegExif.cpp")
 target_link_libraries(gps_metadata_test PRIVATE rawr_tinydng)
 
 rawr_test(renderer_bayer_bin_test

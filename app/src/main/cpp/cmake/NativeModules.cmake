@@ -115,6 +115,7 @@ rawrcam_module(encoding
   DEPENDS color develop diagnostics_logging geometry imaging metadata support tonemap
   SOURCES
     encoding/jpeg/JpegCaptureWriter.cpp
+    encoding/jpeg/JpegExif.cpp
     encoding/jpeg/StripJpegEncoder.cpp
     encoding/rzsl/RzslBundleSink.cpp
 )
