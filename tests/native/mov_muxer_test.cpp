@@ -67,8 +67,13 @@ int main(int argc, char** argv) {
             location = MovMuxer::Location{12.345675, -98.765435, std::nullopt, 0.0, 1'700'000'000'123};
             if (std::string(selected) != "absent") location->altitudeMeters = std::stod(selected);
         }
+        std::optional<MovMuxer::CaptureTime> captureTime;
+        if (const char* millis = std::getenv("RAWR_TEST_CAPTURE_MILLIS")) {
+            const char* offset = std::getenv("RAWR_TEST_CAPTURE_OFFSET");
+            captureTime = MovMuxer::CaptureTime{std::stoll(millis), offset ? std::stoi(offset) : 0};
+        }
         auto owned = std::make_unique<MovMuxer>(fd, pcmBits > 0 ? MovMuxer::Brand::QuickTime : MovMuxer::Brand::Mp4,
-                                                indexFd, location);
+                                                indexFd, location, captureTime);
         MovMuxer& muxer = *owned;
         MovMuxer::Video video;
         video.annexBConfig = slurp(argv[2]);

@@ -13,6 +13,7 @@ import android.view.Surface
 import com.rawr.camera.BuildConfig
 import com.rawr.camera.integration.RawPreviewCoordinator
 import com.rawr.camera.storage.CaptureFileNames
+import com.rawr.camera.storage.CaptureTime
 import com.rawr.camera.storage.VideoOutputStore
 import org.json.JSONObject
 import java.io.File
@@ -173,13 +174,13 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
         settings = request
         val rotation = preview.videoRotationDegrees(request.deviceRotationDegrees)
         check(rotation >= 0) { "Camera orientation is not ready for recording" }
-        val capturedAt = System.currentTimeMillis()
-        val displayName = CaptureFileNames.baseName(capturedAt) + if (request.audioPcmBits > 0) ".mov" else ".mp4"
+        val captureTime = CaptureTime.snapshot()
+        val displayName = CaptureFileNames.baseName(captureTime) + if (request.audioPcmBits > 0) ".mov" else ".mp4"
         uri = null
         journal = null
         try {
             check(preview.beginVideoFps(request.fps)) { "RAW camera could not lock ${request.fps} fps" }
-            uri = outputStore.create(request.saveLocationId, displayName, capturedAt,
+            uri = outputStore.create(request.saveLocationId, displayName, captureTime.wallClockUnixMillis,
                 if (request.audioPcmBits > 0) "video/quicktime" else "video/mp4")
             val recoveryRoot = File(context.noBackupFilesDir, "video_jobs")
             check(recoveryRoot.isDirectory || recoveryRoot.mkdirs()) { "Could not create video recovery directory" }
@@ -199,7 +200,7 @@ class NativeVideoRecorder(private val context: Context, private val preview: Raw
                 request.timestampPolicy.nativeId, Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty(),
                 "RAWR ${BuildConfig.VERSION_NAME}", request.renderProfile,
                 metadataGamut, metadataTransfer, request.logProfile != null, requireNotNull(index).path,
-                request.gps?.nativeValues())
+                request.gps?.nativeValues(), captureTime)
             check(handle != 0L) { "Native recorder did not start" }
             surface = engine.nativeSurface(handle)
             check(preview.setVideoSurface(surface, request.width, request.height, request.bitDepth)) {

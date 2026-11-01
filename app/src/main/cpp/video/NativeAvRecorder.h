@@ -61,6 +61,7 @@ public:
         // Sample index for recovering an interrupted recording; empty = none.
         std::string indexPath;
         std::optional<MovMuxer::Location> location;
+        std::optional<MovMuxer::CaptureTime> captureTime;
         bool log = false;
         TimestampPolicy timestampPolicy = TimestampPolicy::PreserveRealtime;
     };

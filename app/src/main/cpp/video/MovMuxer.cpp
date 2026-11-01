@@ -9,6 +9,8 @@
 #include <cstring>
 #include <cmath>
 #include <ctime>
+#include <cstdio>
+#include <limits>
 #include <iomanip>
 #include <locale>
 #include <memory>
@@ -67,6 +69,34 @@ std::string fixDate(int64_t millis) {
     out << std::put_time(&utc, "%Y-%m-%dT%H:%M:%S") << '.' << std::setfill('0') << std::setw(3)
         << millis % 1000 << 'Z';
     return out.str();
+}
+
+MovMuxer::CaptureTime checkedCaptureTime(MovMuxer::CaptureTime time) {
+    constexpr int64_t kLastUnixMillis = 253402300799999LL;
+    const int64_t localSeconds = time.wallClockUnixMillis / 1000 + int64_t(time.utcOffsetMinutes) * 60;
+    if (time.wallClockUnixMillis < 0 || time.wallClockUnixMillis > kLastUnixMillis ||
+        time.utcOffsetMinutes < -1080 || time.utcOffsetMinutes > 1080 ||
+        localSeconds > kLastUnixMillis / 1000)
+        throw std::invalid_argument("invalid movie capture time");
+    return time;
+}
+
+uint64_t movieDate(const std::optional<MovMuxer::CaptureTime>& time) {
+    return time ? uint64_t(time->wallClockUnixMillis / 1000) + 2'082'844'800ULL : 0;
+}
+
+std::string creationDate(const MovMuxer::CaptureTime& time) {
+    const time_t seconds = static_cast<time_t>(time.wallClockUnixMillis / 1000 + int64_t(time.utcOffsetMinutes) * 60);
+    tm local{};
+    if (!gmtime_r(&seconds, &local)) throw std::runtime_error("movie capture time conversion failed");
+    const int offset = std::abs(time.utcOffsetMinutes);
+    char text[40];
+    const int size = std::snprintf(text, sizeof(text), "%04d-%02d-%02dT%02d:%02d:%02d.%03d%c%02d:%02d",
+                                  local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_hour,
+                                  local.tm_min, local.tm_sec, int(time.wallClockUnixMillis % 1000),
+                                  time.utcOffsetMinutes < 0 ? '-' : '+', offset / 60, offset % 60);
+    if (size <= 0 || size_t(size) >= sizeof(text)) throw std::runtime_error("movie capture time formatting failed");
+    return std::string(text, size_t(size));
 }
 
 void put8(Bytes& out, uint32_t v) { out.push_back(static_cast<uint8_t>(v)); }
@@ -332,24 +362,35 @@ Bytes dinf() {
     return container("dinf", fullBox("dref", 0, 0, dref));
 }
 
-Bytes mdhd(uint32_t timescale, uint64_t duration) {
-    Bytes body;
-    put32(body, 0);
-    put32(body, 0);
-    put32(body, timescale);
-    put32(body, static_cast<uint32_t>(duration));
-    put16(body, 0x55C4);  // "und"
-    put16(body, 0);
-    return fullBox("mdhd", 0, 0, body);
+bool wideHeader(uint64_t date, uint64_t duration) {
+    return date > std::numeric_limits<uint32_t>::max() || duration > std::numeric_limits<uint32_t>::max();
 }
 
-Bytes tkhd(uint32_t id, uint64_t duration, bool audio, int rotation, int width, int height) {
+void putTime(Bytes& out, uint64_t value, bool wide) {
+    if (wide) put64(out, value);
+    else put32(out, static_cast<uint32_t>(value));
+}
+
+Bytes mdhd(uint32_t timescale, uint64_t duration, uint64_t date) {
+    const bool wide = wideHeader(date, duration);
     Bytes body;
-    put32(body, 0);
-    put32(body, 0);
+    putTime(body, date, wide);
+    putTime(body, date, wide);
+    put32(body, timescale);
+    putTime(body, duration, wide);
+    put16(body, 0x55C4);  // "und"
+    put16(body, 0);
+    return fullBox("mdhd", wide ? 1 : 0, 0, body);
+}
+
+Bytes tkhd(uint32_t id, uint64_t duration, bool audio, int rotation, int width, int height, uint64_t date) {
+    const bool wide = wideHeader(date, duration);
+    Bytes body;
+    putTime(body, date, wide);
+    putTime(body, date, wide);
     put32(body, id);
     put32(body, 0);
-    put32(body, static_cast<uint32_t>(duration));
+    putTime(body, duration, wide);
     zeros(body, 8);
     put16(body, 0);  // layer
     put16(body, audio ? 1 : 0);  // alternate group
@@ -358,22 +399,23 @@ Bytes tkhd(uint32_t id, uint64_t duration, bool audio, int rotation, int width, 
     putMatrix(body, audio ? 0 : rotation);
     put32(body, static_cast<uint32_t>(width) << 16);
     put32(body, static_cast<uint32_t>(height) << 16);
-    return fullBox("tkhd", 0, 3, body);
+    return fullBox("tkhd", wide ? 1 : 0, 3, body);
 }
 
 // Optional leading empty edit (track starts late), then the media from mediaTime.
 Bytes edts(uint64_t emptyMovie, uint64_t durationMovie, int64_t mediaTime) {
+    const bool wide = wideHeader(emptyMovie, durationMovie) || mediaTime > std::numeric_limits<int32_t>::max();
     Bytes body;
     put32(body, emptyMovie > 0 ? 2 : 1);
     if (emptyMovie > 0) {
-        put32(body, static_cast<uint32_t>(emptyMovie));
-        put32(body, 0xFFFFFFFF);
+        putTime(body, emptyMovie, wide);
+        putTime(body, wide ? UINT64_MAX : UINT32_MAX, wide);
         put32(body, 0x00010000);
     }
-    put32(body, static_cast<uint32_t>(durationMovie));
-    put32(body, static_cast<uint32_t>(mediaTime));
+    putTime(body, durationMovie, wide);
+    putTime(body, static_cast<uint64_t>(mediaTime), wide);
     put32(body, 0x00010000);
-    return container("edts", fullBox("elst", 0, 0, body));
+    return container("edts", fullBox("elst", wide ? 1 : 0, 0, body));
 }
 
 Bytes stsc(const std::vector<uint32_t>& samplesPerChunk) {
@@ -399,10 +441,11 @@ Bytes co64(const std::vector<uint64_t>& offsets) {
 }
 }  // namespace
 
-// Sample index: "RMX1" then records [u8 type][u32 length][payload], little-endian.
+// Sample index: RMX1 (legacy), RMX2 (GPS), RMX3 (capture time and optional GPS).
+// Records are [u8 type][u32 length][payload], little-endian.
 namespace {
 constexpr uint8_t kIndexHeader = 0, kIndexVideo = 1, kIndexAudio = 2, kIndexVideoSample = 3, kIndexAudioSample = 4;
-constexpr uint8_t kIndexLocation = 5;
+constexpr uint8_t kIndexLocation = 5, kIndexCaptureTime = 6;
 
 void le(Bytes& out, uint64_t v, int bytes) {
     for (int i = 0; i < bytes; ++i) out.push_back(static_cast<uint8_t>(v >> (8 * i)));
@@ -426,8 +469,10 @@ void writeAll(int fd, const uint8_t* data, size_t size, std::string& error) {
 }
 }  // namespace
 
-MovMuxer::MovMuxer(int fd, Brand brand, int indexFd, std::optional<Location> location)
-    try : fd_(fd), brand_(brand), location_(location ? std::optional<Location>(normalizedLocation(*location)) : std::nullopt), indexFd_(indexFd) {
+MovMuxer::MovMuxer(int fd, Brand brand, int indexFd, std::optional<Location> location,
+                   std::optional<CaptureTime> captureTime)
+    try : fd_(fd), brand_(brand), location_(location ? std::optional<Location>(normalizedLocation(*location)) : std::nullopt),
+          captureTime_(captureTime ? std::optional<CaptureTime>(checkedCaptureTime(*captureTime)) : std::nullopt), indexFd_(indexFd) {
     requireOutputFd(fd_);
     buffer_.reserve(kFlushBytes + (1 << 16));
     Bytes ftyp;
@@ -449,12 +494,19 @@ MovMuxer::MovMuxer(int fd, Brand brand, int indexFd, std::optional<Location> loc
     put64(mdat, 0);
     write(mdat.data(), mdat.size());
     if (indexFd_ >= 0) {
-        const uint8_t magic[4] = {'R', 'M', 'X', uint8_t(location_ ? '2' : '1')};
+        const uint8_t magic[4] = {'R', 'M', 'X', uint8_t(captureTime_ ? '3' : location_ ? '2' : '1')};
         indexBuffer_.insert(indexBuffer_.end(), magic, magic + 4);
         Bytes payload;
         le(payload, brand_ == Brand::QuickTime ? 1 : 0, 1);
         le(payload, mdatStart_, 8);
+        if (captureTime_) le(payload, location_ ? 1 : 0, 1);
         indexRecord(kIndexHeader, payload);
+        if (captureTime_) {
+            Bytes time;
+            le(time, uint64_t(captureTime_->wallClockUnixMillis), 8);
+            le(time, uint32_t(captureTime_->utcOffsetMinutes), 4);
+            indexRecord(kIndexCaptureTime, time);
+        }
         if (location_) {
             Bytes gps;
             le(gps, (location_->altitudeMeters ? 1 : 0) | (location_->horizontalAccuracyMeters ? 2 : 0), 1);
@@ -658,9 +710,11 @@ void MovMuxer::recover(int fd, int indexFd) {
         if (n == 0) break;
         index.insert(index.end(), chunk, chunk + n);
     }
-    if (index.size() < 4 || (std::memcmp(index.data(), "RMX1", 4) != 0 && std::memcmp(index.data(), "RMX2", 4) != 0))
+    if (index.size() < 4 || (std::memcmp(index.data(), "RMX1", 4) != 0 && std::memcmp(index.data(), "RMX2", 4) != 0 &&
+                             std::memcmp(index.data(), "RMX3", 4) != 0))
         throw std::runtime_error("unsupported sample index");
-    const bool needsLocation = index[3] == '2';
+    const bool needsCaptureTime = index[3] == '3';
+    bool needsLocation = index[3] == '2';
     std::unique_ptr<MovMuxer> muxer;
     uint64_t end = 0;
     size_t pos = 4;
@@ -672,11 +726,23 @@ void MovMuxer::recover(int fd, int indexFd) {
         const uint8_t* p = index.data() + pos + 5;
         pos += 5 + length;
         if (type == kIndexHeader && length >= 9 && !muxer) {
+            if (needsCaptureTime) {
+                if (length != 10 || (p[9] & ~1)) throw std::runtime_error("invalid sample index header");
+                needsLocation = p[9] & 1;
+            }
             muxer.reset(new MovMuxer(fd, p[0] ? Brand::QuickTime : Brand::Mp4, Recovering{}));
             muxer->mdatStart_ = readLe(p + 1, 8);
             continue;
         }
         if (!muxer) throw std::runtime_error("sample index missing header");
+        if (type == kIndexCaptureTime) {
+            if (!needsCaptureTime || muxer->captureTime_ || muxer->hasVideo() || muxer->hasAudio() || length != 12)
+                throw std::runtime_error("invalid sample index capture time");
+            const uint64_t millis = readLe(p, 8);
+            if (millis > 253402300799999ULL) throw std::runtime_error("invalid sample index capture time");
+            muxer->captureTime_ = checkedCaptureTime({int64_t(millis), static_cast<int32_t>(readLe(p + 8, 4))});
+            continue;
+        }
         if (type == kIndexLocation) {
             if (!needsLocation || muxer->location_ || muxer->hasVideo() || muxer->hasAudio() || length != 41 || (p[0] & ~3))
                 throw std::runtime_error("invalid sample index location");
@@ -736,6 +802,7 @@ void MovMuxer::recover(int fd, int indexFd) {
     }
     if (!muxer) throw std::runtime_error("sample index missing header");
     if (needsLocation && !muxer->location_) throw std::runtime_error("sample index missing location");
+    if (needsCaptureTime && !muxer->captureTime_) throw std::runtime_error("sample index missing capture time");
     if (end <= muxer->mdatStart_) throw std::runtime_error("sample index has no samples");
     // Drop any unindexed tail, then append moov exactly where the indexed media ends.
     if (::ftruncate(fd, static_cast<off_t>(end)) != 0 || ::lseek(fd, static_cast<off_t>(end), SEEK_SET) < 0)
@@ -818,9 +885,9 @@ std::vector<uint8_t> MovMuxer::videoTrak(uint32_t movieTimescale) const {
     zeros(vmhd, 8);
     const bool quickTime = brand_ == Brand::QuickTime;
     return container("trak", tkhd(1, emptyMovie + durationMovie, false, videoConfig_.rotationDegrees, videoConfig_.width,
-                                  videoConfig_.height),
+                                  videoConfig_.height, movieDate(captureTime_)),
                      edts(emptyMovie, durationMovie, delay),
-                     container("mdia", mdhd(video_.timescale, mediaDuration), hdlr("vide", "VideoHandle", quickTime),
+                     container("mdia", mdhd(video_.timescale, mediaDuration, movieDate(captureTime_)), hdlr("vide", "VideoHandle", quickTime),
                                container("minf", fullBox("vmhd", 0, 1, vmhd), dinf(), box("stbl", stbl))));
 }
 
@@ -908,24 +975,29 @@ std::vector<uint8_t> MovMuxer::audioTrak(uint32_t movieTimescale) const {
     Bytes smhd;
     zeros(smhd, 4);
     const bool quickTime = brand_ == Brand::QuickTime;
-    return container("trak", tkhd(2, emptyMovie + durationMovie, true, 0, 0, 0), edts(emptyMovie, durationMovie, 0),
-                     container("mdia", mdhd(audio_.timescale, mediaDuration), hdlr("soun", "SoundHandle", quickTime),
+    return container("trak", tkhd(2, emptyMovie + durationMovie, true, 0, 0, 0, movieDate(captureTime_)), edts(emptyMovie, durationMovie, 0),
+                     container("mdia", mdhd(audio_.timescale, mediaDuration, movieDate(captureTime_)), hdlr("soun", "SoundHandle", quickTime),
                                container("minf", fullBox("smhd", 0, 0, smhd), dinf(), box("stbl", stbl))));
 }
 
 std::vector<uint8_t> MovMuxer::moov() const {
     const Bytes video = videoTrak(kMovieTimescale);
     const Bytes audio = audioTrak(kMovieTimescale);
-    // tkhd duration sits at a fixed offset: trak(8) + tkhd header(12) + 4 + 4 + 4 + 4.
     const auto trackDuration = [](const Bytes& trak) {
-        const uint8_t* p = trak.data() + 8 + 12 + 16;
-        return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+        const bool wide = trak[16] == 1;
+        const uint8_t* p = trak.data() + 8 + 12 + (wide ? 24 : 16);
+        uint64_t duration = 0;
+        for (int i = 0; i < (wide ? 8 : 4); ++i) duration = (duration << 8) | p[i];
+        return duration;
     };
+    const uint64_t duration = std::max(trackDuration(video), trackDuration(audio));
+    const uint64_t date = movieDate(captureTime_);
+    const bool wide = wideHeader(date, duration);
     Bytes mvhd;
-    put32(mvhd, 0);
-    put32(mvhd, 0);
+    putTime(mvhd, date, wide);
+    putTime(mvhd, date, wide);
     put32(mvhd, kMovieTimescale);
-    put32(mvhd, std::max(trackDuration(video), trackDuration(audio)));
+    putTime(mvhd, duration, wide);
     put32(mvhd, 0x00010000);
     put16(mvhd, 0x0100);
     zeros(mvhd, 10);
@@ -933,6 +1005,9 @@ std::vector<uint8_t> MovMuxer::moov() const {
     zeros(mvhd, 24);
     put32(mvhd, 3);
     Bytes metadata;
+    MdtaEntries entries;
+    if (captureTime_)
+        entries.emplace_back("com.apple.quicktime.creationdate", utf8Data(creationDate(*captureTime_)));
     if (location_) {
         const auto& gps = *location_;
         const std::string coordinates = decimal(gps.latitude, 5, 2, true) + decimal(gps.longitude, 5, 3, true) + '/';
@@ -953,13 +1028,13 @@ std::vector<uint8_t> MovMuxer::moov() const {
             append(userEntries, fullBox("meta", 0, 0, items));
         }
         append(metadata, box("udta", userEntries));
-        MdtaEntries entries{{"com.apple.quicktime.location.ISO6709", utf8Data(coordinates)}};
+        entries.emplace_back("com.apple.quicktime.location.ISO6709", utf8Data(coordinates));
         if (gps.fixTimeMillis) entries.emplace_back("com.apple.quicktime.location.date", utf8Data(fixDate(gps.fixTimeMillis)));
         if (gps.horizontalAccuracyMeters)
             entries.emplace_back("com.apple.quicktime.location.accuracy.horizontal", utf8Data(decimal(*gps.horizontalAccuracyMeters, 2, 1, false)));
-        append(metadata, mdtaMeta(entries));
     }
-    return container("moov", fullBox("mvhd", 0, 0, mvhd), video, audio, metadata);
+    if (!entries.empty()) append(metadata, mdtaMeta(entries));
+    return container("moov", fullBox("mvhd", wide ? 1 : 0, 0, mvhd), video, audio, metadata);
 }
 
 void MovMuxer::finish() {

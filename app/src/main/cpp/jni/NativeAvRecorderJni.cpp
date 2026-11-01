@@ -28,6 +28,20 @@ std::string javaString(JNIEnv* env, jstring value) {
     return out;
 }
 
+rawrcam::video::MovMuxer::CaptureTime readCaptureTime(JNIEnv* env, jobject value) {
+    if (!value) throw std::invalid_argument("movie capture time is required");
+    const jclass cls = env->GetObjectClass(value);
+    if (!cls) throw std::runtime_error("movie capture time transport failed");
+    const jfieldID millis = env->GetFieldID(cls, "wallClockUnixMillis", "J");
+    const jfieldID offset = millis ? env->GetFieldID(cls, "utcOffsetMinutes", "I") : nullptr;
+    env->DeleteLocalRef(cls);
+    if (!millis || !offset) throw std::runtime_error("movie capture time transport failed");
+    const rawrcam::video::MovMuxer::CaptureTime result{
+        env->GetLongField(value, millis), env->GetIntField(value, offset)};
+    if (env->ExceptionCheck()) throw std::runtime_error("movie capture time transport failed");
+    return result;
+}
+
 void throwJava(JNIEnv* env, const char* message) {
     jclass type = env->FindClass("java/lang/IllegalStateException");
     if (type) env->ThrowNew(type, message);
@@ -38,7 +52,8 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeAvEngine_nat
     JNIEnv* env, jobject, jint fd, jint width, jint height, jint fps, jint bitrate, jint intraFrames,
     jint rotationDegrees, jint bitrateMode, jint maxBFrames, jint audioChannels, jint audioBitrate, jint audioPreset,
     jint audioDeviceId, jfloat audioGainDb, jint audioLowCutHz, jint audioPcmBits, jint bitDepth,
-    jint timestampPolicy, jstring deviceMake, jstring deviceModel, jstring software, jstring renderProfile, jstring gamut, jstring transfer, jboolean log, jstring indexPath, jdoubleArray gps) {
+    jint timestampPolicy, jstring deviceMake, jstring deviceModel, jstring software, jstring renderProfile, jstring gamut, jstring transfer, jboolean log, jstring indexPath, jdoubleArray gps,
+    jobject captureTime) {
     bool ownsFd = false;
     try {
         NativeAvRecorder::Settings settings{};
@@ -66,6 +81,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeAvEngine_nat
         settings.transfer = javaString(env, transfer);
         settings.log = log;
         settings.indexPath = javaString(env, indexPath);
+        settings.captureTime = readCaptureTime(env, captureTime);
         if (gps) {
             if (env->GetArrayLength(gps) != 6) throw std::invalid_argument("invalid movie location payload");
             jdouble values[5];
@@ -85,7 +101,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_com_rawr_camera_video_NativeAvEngine_nat
         return static_cast<jlong>(reinterpret_cast<intptr_t>(instance.release()));
     } catch (const std::exception& error) {
         if (!ownsFd && fd >= 0) close(fd);
-        throwJava(env, error.what());
+        if (!env->ExceptionCheck()) throwJava(env, error.what());
         return 0;
     }
 }

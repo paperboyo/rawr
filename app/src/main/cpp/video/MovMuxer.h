@@ -21,6 +21,11 @@ class MovMuxer final {
 public:
     enum class Brand { Mp4, QuickTime };
 
+    struct CaptureTime {
+        int64_t wallClockUnixMillis;
+        int32_t utcOffsetMinutes;
+    };
+
     struct Location {
         double latitude;
         double longitude;
@@ -57,7 +62,8 @@ public:
 
     // indexFd (optional, owned): append-only sample index, written only after the
     // samples it describes reach fd, so recover() can finish an interrupted file.
-    MovMuxer(int fd, Brand brand, int indexFd = -1, std::optional<Location> location = std::nullopt);
+    MovMuxer(int fd, Brand brand, int indexFd = -1, std::optional<Location> location = std::nullopt,
+             std::optional<CaptureTime> captureTime = std::nullopt);
     ~MovMuxer();
 
     // Rebuilds moov for a file whose recording stopped without finish(), from its
@@ -119,6 +125,7 @@ private:
     int fd_ = -1;
     Brand brand_;
     std::optional<Location> location_;
+    std::optional<CaptureTime> captureTime_;
     Video videoConfig_;
     Audio audioConfig_;
     Track video_;

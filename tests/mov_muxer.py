@@ -7,6 +7,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 helper, patch, ffmpeg, ffprobe, build = sys.argv[1:]
 def run(*args, **environment):
@@ -131,6 +132,24 @@ def media_signature(file):
     tracks = [body for kind, body in boxes(top[b'moov']) if kind == b'trak']
     return top[b'ftyp'], top[b'mdat'], tracks
 
+def check_capture_time(file, millis, offset):
+    movie = list(boxes(next(body for kind, body in boxes(file.read_bytes()) if kind == b'moov')))
+    headers = [body for kind, body in movie if kind == b'mvhd']
+    for kind, body in movie:
+        if kind == b'trak':
+            track = dict(boxes(body))
+            headers += [track[b'tkhd'], dict(boxes(track[b'mdia']))[b'mdhd']]
+    expected = millis // 1000 + 2_082_844_800
+    assert len(headers) == 5
+    for header in headers:
+        assert header[0] == int(expected > 0xFFFFFFFF)
+        width = 8 if header[0] else 4
+        assert int.from_bytes(header[4:4 + width], 'big') == expected
+        assert int.from_bytes(header[4 + width:4 + 2 * width], 'big') == expected
+    local = datetime.fromtimestamp(millis // 1000, timezone(timedelta(minutes=offset)))
+    text = local.replace(microsecond=millis % 1000 * 1000).isoformat(timespec='milliseconds')
+    assert gps_metadata(file)[1]['com.apple.quicktime.creationdate'] == text
+
 with tempfile.TemporaryDirectory(prefix="mov-", dir=build) as directory:
     root = Path(directory)
     def mux_args(file, bits, index=None, crash_at=0):
@@ -218,9 +237,16 @@ with tempfile.TemporaryDirectory(prefix="mov-", dir=build) as directory:
         # The source MP4 trims AAC priming with an edit list; compare against the untrimmed ADTS packets.
         assert md5(out, 'a') == md5(adts, 'a'), name
         check_gps_output(out, 0)
+        millis, offset = (1_700_000_000_123, 345) if name == 'ip' else (2_240_611_200_123, -480)
+        run(*mux_args(out, 0), RAWR_TEST_CAPTURE_MILLIS=str(millis), RAWR_TEST_CAPTURE_OFFSET=str(offset))
         run(patch, out)  # Device metadata patcher must accept MovMuxer layout.
-        assert probe(out, '-show_format')['format']['tags']['make'] == 'vivo'
+        check_capture_time(out, millis, offset)
+        saved = probe(out, '-show_format')['format']
+        assert saved['tags']['make'] == 'vivo' and saved['duration'] == info['format']['duration']
         assert md5(out, 'v') == md5(source, 'v'), name
+        if name == 'ibbp':
+            run(patch, out, '--log')
+            check_capture_time(out, millis, offset)
         print(name, 'ok', len(units), 'frames', len(frames), 'AAC packets')
 
     # PCM in QuickTime: the muxed audio must be the exact input bytes, with the video unchanged.
@@ -249,7 +275,9 @@ with tempfile.TemporaryDirectory(prefix="mov-", dir=build) as directory:
         assert md5(out, 'v') == md5(source, 'v')
         assert gps_metadata(out) == ([], {}, [])
         check_gps_output(out, bits)
+        run(*mux_args(out, bits), RAWR_TEST_CAPTURE_MILLIS='1700000000123')
         run(patch, out)
+        check_capture_time(out, 1_700_000_000_123, 0)
         assert run(ffmpeg, '-v', 'error', '-i', out, '-map', '0:a', '-c', 'copy', '-f', f's{bits}le', '-') == pcm
         print(f'pcm{bits} ok', len(blocks), 'blocks')
 
@@ -279,5 +307,14 @@ with tempfile.TemporaryDirectory(prefix="mov-", dir=build) as directory:
         assert audio['codec_name'] == (f'pcm_s{bits}le' if bits else 'aac'), audio['codec_name']
         run(ffmpeg, '-v', 'error', '-xerror', '-i', out, '-f', 'null', '-')
         check_gps_output(out, bits, crash_at)
+        run(*mux_args(out, bits, root/'index', crash_at), RAWR_TEST_CAPTURE_MILLIS='1700000000123',
+            RAWR_TEST_CAPTURE_OFFSET='345', RAWR_TEST_GPS='absent', TZ='Asia/Kathmandu')
+        with (root/'index').open('ab') as index:
+            index.write(struct.pack('<BI', 3, 21) + b'\x00')
+        run(helper, '--recover', out, root/'index', TZ='UTC')
+        run(patch, out, '--log')
+        check_capture_time(out, 1_700_000_000_123, 345)
+        check_gps(out, 'absent')
+        run(ffmpeg, '-v', 'error', '-xerror', '-i', out, '-f', 'null', '-')
         print(f'crash{bits} ok: recovered {recovered}/{len(units)} frames, audio {float(audio["duration"]):.2f} s')
-    print('GPS presence/absence, primary tags, ItemList height, RMX2, patching and recovery ok')
+    print('GPS, capture time/offsets, UTC/64-bit headers, RMX1/2/3, patching and recovery ok')

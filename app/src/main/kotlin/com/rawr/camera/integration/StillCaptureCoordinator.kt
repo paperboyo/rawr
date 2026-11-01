@@ -15,11 +15,11 @@ import com.rawr.camera.settings.model.resolve
 import com.rawr.camera.settings.model.toModesArray
 import com.rawr.camera.settings.model.toStrengthsArray
 import com.rawr.camera.storage.ArtifactDiagnosticExporter
+import com.rawr.camera.storage.CaptureTime
 import com.rawr.camera.storage.StillProcessingService
 import com.rawr.camera.storage.StillOutputStore
 import com.rawr.camera.storage.ZslBundleExportService
 import java.io.File
-import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 
 class StillCaptureCoordinator(
@@ -63,7 +63,7 @@ class StillCaptureCoordinator(
 
     private var closeWhenDrained: (() -> Unit)? = null
     private var closing = false
-    private data class CaptureInput(val settings: SettingsValues, val wallClockMillis: Long, val releaseAssets: () -> Unit,
+    private data class CaptureInput(val settings: SettingsValues, val captureTime: CaptureTime, val releaseAssets: () -> Unit,
                                     var frozenAssetId: String? = null,
                                     val gps: com.rawr.camera.location.CaptureGps? = null)
     private val queuedInputs = java.util.concurrent.ConcurrentLinkedQueue<CaptureInput>()
@@ -78,7 +78,7 @@ class StillCaptureCoordinator(
         val snapshot = settings().copy(dngEnabled = format.dng, jpegEnabled = format.jpeg)
         val releaseAssets = com.rawr.camera.settings.preferences.CaptureLutPins.acquire(
             snapshot.userLutProfiles.firstOrNull { it.id == snapshot.selectedUserLutProfileId })
-        queuedInputs.add(CaptureInput(snapshot, System.currentTimeMillis(), releaseAssets,
+        queuedInputs.add(CaptureInput(snapshot, CaptureTime.snapshot(), releaseAssets,
             gps = if (snapshot.locationTagging) gpsSnapshot() else null))
         activeCaptures.incrementAndGet()
         preview.beginStillCapture()
@@ -122,7 +122,7 @@ class StillCaptureCoordinator(
     }
 
     private fun captureInternal(jpegEnabled: Boolean, input: CaptureInput): Long {
-        val now = input.wallClockMillis
+        val now = input.captureTime.wallClockUnixMillis
         val current = try { CaptureRecipe.freezeAssets(application, input.settings) }
             finally { input.releaseAssets() }
         input.frozenAssetId = current.selectedUserLutProfileId
@@ -192,7 +192,7 @@ class StillCaptureCoordinator(
         val jpegDisplayName =
             output.jpeg?.displayName ?: output.jobName.removeSuffix(".dng") + ".diagnostic.jpg"
         val rendererDisplayName = current.captureRendererDisplayName()
-        val offsetMinutes = TimeZone.getDefault().getOffset(now) / 60_000
+        val offsetMinutes = input.captureTime.utcOffsetMinutes
         // Single path arbitration point: the sealed config resolves to
         // exactly what the still pipeline may run (RAW only here; wavelet
         // only here). Multiframe resolves separately below. Native keeps its

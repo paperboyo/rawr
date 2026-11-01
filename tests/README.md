@@ -9,6 +9,10 @@ cmake --build tmp/host-tests --parallel 4
 ctest --test-dir tmp/host-tests --output-on-failure
 ```
 
+The existing `mov_muxer` scenarios also check all ten date fields and the keyed
+creation date: MP4/MOV, representative UTC offsets, one 64-bit date-header case,
+and interrupted recovery with a partial index tail and GPS/LOG coexistence.
+
 For memory checks, configure a separate build with `-DRAWR_SANITIZERS=ON`.
 Native libraries also retain their CMake test targets and reference fixtures;
 GPU tests require a suitable Vulkan implementation. Kotlin tests run via Gradle.

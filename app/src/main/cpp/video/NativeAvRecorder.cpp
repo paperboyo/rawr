@@ -161,7 +161,8 @@ void NativeAvRecorder::start() {
                                 ? -1
                                 : open(settings_.indexPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0600);
         muxer_ = std::make_unique<MovMuxer>(
-            outputFd_, settings_.audioPcmBits > 0 ? MovMuxer::Brand::QuickTime : MovMuxer::Brand::Mp4, indexFd, settings_.location);
+            outputFd_, settings_.audioPcmBits > 0 ? MovMuxer::Brand::QuickTime : MovMuxer::Brand::Mp4,
+            indexFd, settings_.location, settings_.captureTime);
         configureVideo();
         configureAudio();
         started_ = true;
